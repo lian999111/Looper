@@ -3,16 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>無縫 Looper</title>
+<title>無縫練琴 Looper Pro</title>
 
-<!-- iOS 與 Android 獨立全螢幕 App (PWA) 設定 -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="無縫 Looper">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#121212">
 
-<!-- 內嵌桌面圖示 (SVG Data URI) -->
 <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231e1e1e'/><text y='68' x='50' text-anchor='middle' font-size='55'>🎸</text></svg>">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231e1e1e'/><text y='68' x='50' text-anchor='middle' font-size='55'>🎸</text></svg>">
 
@@ -30,7 +28,7 @@
     background: var(--bg);
     color: var(--text);
     margin: 0;
-    padding: calc(16px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom)) 16px;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)) 16px;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -45,7 +43,6 @@
   }
   h2 { margin: 0 0 10px 0; font-size: 1.15rem; font-weight: 600; text-align: center; }
   
-  /* 使用視覺隱藏而非 display:none，確保所有手機系統皆允許喚起檔案選擇器 */
   #audioFile {
     position: absolute;
     width: 1px;
@@ -124,13 +121,49 @@
   .nudge-btn { flex: 1; padding: 9px 4px; font-size: 0.78rem; background: #262626; }
   .slider-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
   input[type="range"] { flex: 1; accent-color: var(--accent); height: 6px; }
+
+  .preset-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #2e2e2e;
+  }
+  .preset-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .preset-chip {
+    display: inline-flex;
+    align-items: center;
+    background: #292929;
+    border: 1px solid #3d3d3d;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .preset-chip button.load-preset {
+    background: transparent;
+    padding: 7px 10px;
+    font-size: 0.8rem;
+    color: var(--accent);
+    border-radius: 0;
+  }
+  .preset-chip button.del-preset {
+    background: #382222;
+    color: #ff6b6b;
+    padding: 7px 8px;
+    font-size: 0.75rem;
+    border-radius: 0;
+  }
 </style>
 </head>
 <body>
 
 <div class="card">
-  <h2>🎸 無縫練琴 Looper</h2>
-  <!-- 使用 label for 直接綁定 input，這是 iOS Safari 與 Android WebView 權限最高、最不會被阻擋的原生寫法 -->
+  <h2>🎸 無縫練琴 Looper Pro</h2>
   <input type="file" id="audioFile" accept="*/*">
   <label for="audioFile" class="file-btn" id="fileBtn">
     📁 點擊選擇 / 更換音訊檔
@@ -143,7 +176,7 @@
   </div>
   <div class="time-display" id="timeDisplay">00:00.00</div>
   <div class="sub-info" id="abDisplay">A: 00:00.00 &nbsp;|&nbsp; B: 00:00.00</div>
-  <div class="status-badge" id="statusBadge">請點擊上方按鈕載入音訊檔</div>
+  <div class="status-badge" id="statusBadge">正在檢查上次快取的音檔...</div>
 
   <div class="btn-row">
     <button id="playBtn" class="primary" disabled>▶ 播放</button>
@@ -172,6 +205,12 @@
     <button class="nudge-btn" onclick="nudge('B', 0.01)" disabled>+10ms</button>
     <button class="nudge-btn" onclick="nudge('B', 0.05)" disabled>+50ms</button>
   </div>
+
+  <div class="preset-header">
+    <span style="font-size:0.82rem; color:var(--subtext);">📌 此曲的 A-B 記憶書籤</span>
+    <button id="addPresetBtn" style="padding:6px 10px; font-size:0.78rem; background:#2e3b32; color:var(--accent);" disabled>➕ 儲存目前段落</button>
+  </div>
+  <div class="preset-list" id="presetList"></div>
 </div>
 
 <div class="card">
@@ -190,6 +229,8 @@
   </div>
 </div>
 
+<audio id="bgKeepAliveAudio" playsinline loop style="display:none;"></audio>
+
 <script>
 let audioCtx = null;
 let rawBuffer = null;
@@ -199,15 +240,19 @@ let sourceNode = null;
 let isPlaying = false;
 let isLooping = true;
 let tempo = 1.0;
+let currentTrackName = "無縫練琴 Loop";
+let currentTrackKey = null;
 
 let loopStart = 0;
 let loopEnd = 0;
+let savedPresets = [];
 
 let startCtxTime = 0;
 let startOffset = 0;
 let pauseAudioTime = 0;
 let animId = null;
 let renderTimer = null;
+let wakeLock = null;
 
 const fileInput = document.getElementById('audioFile');
 const fileBtn = document.getElementById('fileBtn');
@@ -216,15 +261,292 @@ const loopToggleBtn = document.getElementById('loopToggleBtn');
 const setABtn = document.getElementById('setABtn');
 const setBBtn = document.getElementById('setBBtn');
 const resetABBtn = document.getElementById('resetABBtn');
+const addPresetBtn = document.getElementById('addPresetBtn');
+const presetList = document.getElementById('presetList');
 const speedSlider = document.getElementById('speedSlider');
 const speedVal = document.getElementById('speedVal');
 const timeDisplay = document.getElementById('timeDisplay');
 const abDisplay = document.getElementById('abDisplay');
 const statusBadge = document.getElementById('statusBadge');
+const bgAudio = document.getElementById('bgKeepAliveAudio');
 const canvas = document.getElementById('waveform');
 const ctx = canvas.getContext('2d');
 
 let peaks = [];
+
+/**
+ * IndexedDB 本地音檔快取與記憶管理
+ */
+const DB_NAME = "LooperDB";
+const STORE_NAME = "audioCache";
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+  });
+}
+
+async function saveFileToDB(key, arrayBuffer, fileName) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put({ arrayBuffer, fileName }, key);
+    tx.objectStore(STORE_NAME).put(key, "lastActiveKey");
+  } catch (e) {}
+}
+
+async function loadFileFromDB(key) {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+async function getLastActiveKey() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).get("lastActiveKey");
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveTrackState() {
+  if (!currentTrackKey || !rawBuffer) return;
+  try {
+    const state = { loopStart, loopEnd, tempo, isLooping, presets: savedPresets };
+    localStorage.setItem(currentTrackKey, JSON.stringify(state));
+  } catch (e) {}
+}
+
+function loadTrackState(duration) {
+  savedPresets = [];
+  if (!currentTrackKey) return false;
+  try {
+    const raw = localStorage.getItem(currentTrackKey);
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+
+    let restored = false;
+    if (typeof state.loopStart === 'number' && typeof state.loopEnd === 'number') {
+      if (state.loopStart >= 0 && state.loopEnd <= duration + 0.05 && state.loopEnd - state.loopStart >= 0.1) {
+        loopStart = state.loopStart;
+        loopEnd = Math.min(duration, state.loopEnd);
+        restored = true;
+      }
+    }
+    if (typeof state.tempo === 'number' && state.tempo >= 0.4 && state.tempo <= 1.5) {
+      tempo = state.tempo;
+      speedSlider.value = tempo;
+      speedVal.textContent = tempo.toFixed(2) + 'x';
+    }
+    if (typeof state.isLooping === 'boolean') {
+      isLooping = state.isLooping;
+      loopToggleBtn.textContent = isLooping ? "🔁 A-B 循環: 開啟" : "➡️ A-B 循環: 關閉";
+      loopToggleBtn.classList.toggle('active-loop', isLooping);
+    }
+    if (Array.isArray(state.presets)) {
+      savedPresets = state.presets;
+    }
+    renderPresets();
+    return restored;
+  } catch (e) {
+    return false;
+  }
+}
+
+function renderPresets() {
+  presetList.innerHTML = '';
+  if (savedPresets.length === 0) {
+    presetList.innerHTML = '<span style="font-size:0.78rem; color:#666;">尚無書籤（系統已自動記憶您最後一次設定的 A-B 點）</span>';
+    return;
+  }
+  savedPresets.forEach((p, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'preset-chip';
+
+    const loadBtn = document.createElement('button');
+    loadBtn.className = 'load-preset';
+    loadBtn.textContent = `${p.name} (${formatTime(p.a)}-${formatTime(p.b)})`;
+    loadBtn.onclick = () => {
+      loopStart = Math.max(0, p.a);
+      loopEnd = Math.min(rawBuffer.duration, p.b);
+      if (p.tempo) {
+        tempo = p.tempo;
+        speedSlider.value = tempo;
+        speedVal.textContent = tempo.toFixed(2) + 'x';
+      }
+      saveTrackState();
+      triggerRebuildAndPlay(loopStart);
+    };
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'del-preset';
+    delBtn.textContent = '✕';
+    delBtn.onclick = () => {
+      savedPresets.splice(idx, 1);
+      saveTrackState();
+      renderPresets();
+    };
+
+    chip.appendChild(loadBtn);
+    chip.appendChild(delBtn);
+    presetList.appendChild(chip);
+  });
+}
+
+addPresetBtn.addEventListener('click', () => {
+  if (!rawBuffer) return;
+  const defaultName = `段落 ${savedPresets.length + 1}`;
+  const name = prompt("請輸入此練習段落名稱（例如：前奏、Solo）：", defaultName);
+  if (name === null) return;
+  savedPresets.push({
+    name: name.trim() || defaultName,
+    a: loopStart,
+    b: loopEnd,
+    tempo: tempo
+  });
+  saveTrackState();
+  renderPresets();
+});
+
+// App 啟動時自動載入上次快取的音檔與設定
+window.addEventListener('DOMContentLoaded', async () => {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  audioCtx = new AudioContextClass({ latencyHint: 'playback' });
+
+  const lastKey = await getLastActiveKey();
+  if (lastKey) {
+    statusBadge.textContent = "⚡ 正在從本地資料庫還原上次的音訊與 A-B 點...";
+    const cached = await loadFileFromDB(lastKey);
+    if (cached && cached.arrayBuffer) {
+      currentTrackKey = lastKey;
+      currentTrackName = cached.fileName.replace(/\.[^/.]+$/, "");
+      
+      audioCtx.decodeAudioData(cached.arrayBuffer, (decoded) => {
+        rawBuffer = decoded;
+        loopStart = 0;
+        loopEnd = rawBuffer.duration;
+        tempo = 1.0;
+        speedSlider.value = 1.0;
+        speedVal.textContent = '1.00x';
+
+        const hasMemory = loadTrackState(rawBuffer.duration);
+        pauseAudioTime = loopStart;
+
+        computePeaks();
+        rebuildSeamlessLoopBuffer();
+        enableControls();
+        renderPresets();
+        updateUI();
+        updateMediaSession();
+
+        fileBtn.textContent = "🎵 點擊更換音檔 (" + cached.fileName + ")";
+        statusBadge.textContent = hasMemory ? `⚡ 已自動還原上次練琴狀態！直接按播放即可` : `✅ 已還原音檔：${cached.fileName}`;
+      }, () => {
+        statusBadge.textContent = "請點擊上方按鈕載入音訊檔";
+      });
+      return;
+    }
+  }
+  statusBadge.textContent = "請點擊上方按鈕載入音訊檔";
+});
+
+// 產生極低音量背景保活 WAV
+function initSilentKeepAliveWav() {
+  const sampleRate = 8000;
+  const numSamples = sampleRate * 1;
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
+  const writeStr = (off, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, numSamples * 2, true);
+  for (let i = 0; i < numSamples; i++) {
+    view.setInt16(44 + i * 2, (i % 2 === 0) ? 1 : -1, true);
+  }
+  const blob = new Blob([buffer], { type: 'audio/wav' });
+  bgAudio.src = URL.createObjectURL(blob);
+  bgAudio.volume = 0.01;
+}
+initSilentKeepAliveWav();
+
+async function requestWakeLock() {
+  if ('wakeLock' in navigator) {
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+}
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+function updateMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: currentTrackName,
+    artist: `A-B Loop (${tempo.toFixed(2)}x 原調)`,
+    album: '無縫練琴 Looper'
+  });
+  navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+
+  navigator.mediaSession.setActionHandler('play', () => {
+    if (!isPlaying) startAudio(pauseAudioTime);
+  });
+  navigator.mediaSession.setActionHandler('pause', () => {
+    if (isPlaying) stopAudio();
+  });
+  navigator.mediaSession.setActionHandler('previoustrack', () => {
+    if (isPlaying) startAudio(loopStart);
+    else { pauseAudioTime = loopStart; updateUI(); }
+  });
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (isPlaying) {
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      requestWakeLock();
+      tick();
+    } else {
+      updateUI();
+    }
+  }
+});
 
 fileInput.addEventListener('click', () => {
   fileInput.value = '';
@@ -235,45 +557,51 @@ fileInput.addEventListener('change', (e) => {
   if (!file) return;
 
   if (isPlaying) stopAudio();
-  fileBtn.textContent = "⏳ 正在讀取並解碼音訊...";
+  currentTrackName = file.name.replace(/\.[^/.]+$/, "");
+  currentTrackKey = `looper_mem_${file.name}_${file.size}`;
+  fileBtn.textContent = "⏳ 正在讀取並快取音訊...";
   statusBadge.textContent = `正在處理：${file.name}`;
 
-  if (!audioCtx) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    audioCtx = new AudioContextClass();
-  }
   if (audioCtx.state === 'suspended') {
     audioCtx.resume();
   }
 
   const reader = new FileReader();
-  reader.onload = function(evt) {
+  reader.onload = async function(evt) {
     const arrayBuffer = evt.target.result;
+    
+    // 存入 IndexedDB 快取
+    await saveFileToDB(currentTrackKey, arrayBuffer, file.name);
+
     audioCtx.decodeAudioData(
       arrayBuffer,
       function(decoded) {
         rawBuffer = decoded;
         loopStart = 0;
         loopEnd = rawBuffer.duration;
-        pauseAudioTime = 0;
+        tempo = 1.0;
+        speedSlider.value = 1.0;
+        speedVal.textContent = '1.00x';
+
+        const hasMemory = loadTrackState(rawBuffer.duration);
+        pauseAudioTime = loopStart;
 
         computePeaks();
         rebuildSeamlessLoopBuffer();
         enableControls();
+        renderPresets();
         updateUI();
+        updateMediaSession();
+
         fileBtn.textContent = "🎵 點擊更換音檔 (" + file.name + ")";
-        statusBadge.textContent = "✅ 載入成功！可點擊播放並設定 A / B 點";
+        statusBadge.textContent = hasMemory ? `⚡ 已自動恢復記憶區間與速度！` : `✅ 載入並快取成功！`;
       },
       function(err) {
-        alert("解碼失敗：請確認選擇的是音訊或影片檔（如 MP3、M4A、WAV）。");
+        alert("解碼失敗：請確認選擇的是音訊檔（如 MP3、M4A、WAV）。");
         fileBtn.textContent = "📁 點擊選擇 / 更換音訊檔";
         statusBadge.textContent = "❌ 音訊解碼失敗";
       }
     );
-  };
-  reader.onerror = function() {
-    alert("檔案讀取失敗，請確認檔案已下載至手機本地。");
-    fileBtn.textContent = "📁 點擊選擇 / 更換音訊檔";
   };
   reader.readAsArrayBuffer(file);
 });
@@ -406,6 +734,9 @@ function getCurrentAudioTime() {
 
 function startAudio(targetOriginalTime) {
   if (!rawBuffer || !loopBuffer) return;
+
+  bgAudio.play().catch(() => {});
+
   if (audioCtx.state === 'suspended') audioCtx.resume();
   if (sourceNode) {
     try { sourceNode.stop(); sourceNode.disconnect(); } catch (e) {}
@@ -431,6 +762,9 @@ function startAudio(targetOriginalTime) {
   isPlaying = true;
   playBtn.textContent = "⏸ 暫停";
 
+  requestWakeLock();
+  updateMediaSession();
+
   cancelAnimationFrame(animId);
   tick();
 }
@@ -442,13 +776,18 @@ function stopAudio() {
     try { sourceNode.stop(); sourceNode.disconnect(); } catch (e) {}
     sourceNode = null;
   }
+  bgAudio.pause();
+  releaseWakeLock();
+
   isPlaying = false;
   playBtn.textContent = "▶ 播放";
+  updateMediaSession();
   cancelAnimationFrame(animId);
   updateUI();
 }
 
 function triggerRebuildAndPlay(targetPos) {
+  saveTrackState();
   statusBadge.textContent = "⚡ 正在合成無縫音訊區間...";
   clearTimeout(renderTimer);
   renderTimer = setTimeout(() => {
@@ -460,7 +799,7 @@ function triggerRebuildAndPlay(targetPos) {
       updateUI();
     }
     const lenSec = (loopEnd - loopStart).toFixed(1);
-    statusBadge.textContent = `✅ 無縫循環區間：${lenSec} 秒 (${tempo.toFixed(2)}x 原調)`;
+    statusBadge.textContent = `💾 已自動快取並記憶：${lenSec} 秒 (${tempo.toFixed(2)}x 原調)`;
   }, 15);
 }
 
@@ -476,6 +815,7 @@ loopToggleBtn.addEventListener('click', () => {
   if (isPlaying && sourceNode) {
     sourceNode.loop = isLooping;
   }
+  saveTrackState();
   updateUI();
 });
 
@@ -628,7 +968,7 @@ function updateUI() {
 }
 
 function tick() {
-  if (!isPlaying) return;
+  if (!isPlaying || document.visibilityState === 'hidden') return;
   updateUI();
   animId = requestAnimationFrame(tick);
 }
