@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>無縫 Looper</title>
+
+<!-- iOS 與 Android 獨立全螢幕 App (PWA) 設定 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="無縫 Looper">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#121212">
+
+<!-- 內嵌桌面圖示 (SVG Data URI) -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231e1e1e'/><text y='68' x='50' text-anchor='middle' font-size='55'>🎸</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231e1e1e'/><text y='68' x='50' text-anchor='middle' font-size='55'>🎸</text></svg>">
+
+<style>
+  :root {
+    --bg: #121212;
+    --panel: #1e1e1e;
+    --accent: #00e676;
+    --warn: #ff9100;
+    --text: #ffffff;
+    --subtext: #aaaaaa;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom)) 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .card {
+    background: var(--panel);
+    padding: 15px;
+    border-radius: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  h2 { margin: 0 0 10px 0; font-size: 1.15rem; font-weight: 600; text-align: center; }
+  
+  /* 使用視覺隱藏而非 display:none，確保所有手機系統皆允許喚起檔案選擇器 */
+  #audioFile {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    z-index: -1;
+  }
+  
+  .file-btn {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    background: #2a2a2a;
+    color: var(--accent);
+    text-align: center;
+    padding: 14px;
+    border-radius: 10px;
+    font-weight: 600;
+    border: 1px dashed var(--accent);
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  .file-btn:active { background: #383838; }
+
+  #waveform-container {
+    position: relative;
+    height: 105px;
+    background: #0a0a0a;
+    border-radius: 10px;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas { width: 100%; height: 100%; display: block; }
+  .time-display {
+    text-align: center;
+    font-size: 1.55rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: bold;
+    margin: 8px 0 2px 0;
+  }
+  .sub-info {
+    text-align: center;
+    font-size: 0.82rem;
+    color: var(--subtext);
+    font-variant-numeric: tabular-nums;
+  }
+  .status-badge {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--warn);
+    min-height: 1.2em;
+    margin-top: 6px;
+    word-break: break-all;
+  }
+  .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .btn-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .btn-row-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-top: 8px; }
+  button {
+    background: #2c2c2c;
+    color: var(--text);
+    border: none;
+    padding: 12px 8px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.05s, background 0.15s;
+  }
+  button:active { transform: scale(0.97); background: #3d3d3d; }
+  button:disabled { opacity: 0.4; pointer-events: none; }
+  button.primary { background: var(--accent); color: #000; font-size: 1.05rem; }
+  button.active-loop { background: var(--warn); color: #000; }
+  .nudge-group { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 6px; }
+  .nudge-group span { font-size: 0.8rem; color: var(--subtext); min-width: 42px; }
+  .nudge-btn { flex: 1; padding: 9px 4px; font-size: 0.78rem; background: #262626; }
+  .slider-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  input[type="range"] { flex: 1; accent-color: var(--accent); height: 6px; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>🎸 無縫練琴 Looper</h2>
+  <!-- 使用 label for 直接綁定 input，這是 iOS Safari 與 Android WebView 權限最高、最不會被阻擋的原生寫法 -->
+  <input type="file" id="audioFile" accept="*/*">
+  <label for="audioFile" class="file-btn" id="fileBtn">
+    📁 點擊選擇 / 更換音訊檔
+  </label>
+</div>
+
+<div class="card">
+  <div id="waveform-container">
+    <canvas id="waveform"></canvas>
+  </div>
+  <div class="time-display" id="timeDisplay">00:00.00</div>
+  <div class="sub-info" id="abDisplay">A: 00:00.00 &nbsp;|&nbsp; B: 00:00.00</div>
+  <div class="status-badge" id="statusBadge">請點擊上方按鈕載入音訊檔</div>
+
+  <div class="btn-row">
+    <button id="playBtn" class="primary" disabled>▶ 播放</button>
+    <button id="loopToggleBtn" class="active-loop" disabled>🔁 A-B 循環: 開啟</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="btn-row-3">
+    <button id="setABtn" disabled>📍 設為 A 點</button>
+    <button id="setBBtn" disabled>📍 設為 B 點</button>
+    <button id="resetABBtn" disabled>🔄 重設全曲</button>
+  </div>
+
+  <div class="nudge-group">
+    <span>A 微調</span>
+    <button class="nudge-btn" onclick="nudge('A', -0.05)" disabled>-50ms</button>
+    <button class="nudge-btn" onclick="nudge('A', -0.01)" disabled>-10ms</button>
+    <button class="nudge-btn" onclick="nudge('A', 0.01)" disabled>+10ms</button>
+    <button class="nudge-btn" onclick="nudge('A', 0.05)" disabled>+50ms</button>
+  </div>
+  <div class="nudge-group">
+    <span>B 微調</span>
+    <button class="nudge-btn" onclick="nudge('B', -0.05)" disabled>-50ms</button>
+    <button class="nudge-btn" onclick="nudge('B', -0.01)" disabled>-10ms</button>
+    <button class="nudge-btn" onclick="nudge('B', 0.01)" disabled>+10ms</button>
+    <button class="nudge-btn" onclick="nudge('B', 0.05)" disabled>+50ms</button>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex; justify-content:space-between; font-size:0.9rem;">
+    <span>速度 (維持原音高)</span>
+    <strong id="speedVal" style="color:var(--accent);">1.00x</strong>
+  </div>
+  <div class="slider-row">
+    <input type="range" id="speedSlider" min="0.4" max="1.5" step="0.05" value="1.0" disabled>
+  </div>
+  <div class="btn-row-4">
+    <button onclick="setSpeed(0.5)" class="nudge-btn" disabled>0.50x</button>
+    <button onclick="setSpeed(0.75)" class="nudge-btn" disabled>0.75x</button>
+    <button onclick="setSpeed(0.85)" class="nudge-btn" disabled>0.85x</button>
+    <button onclick="setSpeed(1.0)" class="nudge-btn" disabled>1.00x</button>
+  </div>
+</div>
+
+<script>
+let audioCtx = null;
+let rawBuffer = null;
+let loopBuffer = null;
+let sourceNode = null;
+
+let isPlaying = false;
+let isLooping = true;
+let tempo = 1.0;
+
+let loopStart = 0;
+let loopEnd = 0;
+
+let startCtxTime = 0;
+let startOffset = 0;
+let pauseAudioTime = 0;
+let animId = null;
+let renderTimer = null;
+
+const fileInput = document.getElementById('audioFile');
+const fileBtn = document.getElementById('fileBtn');
+const playBtn = document.getElementById('playBtn');
+const loopToggleBtn = document.getElementById('loopToggleBtn');
+const setABtn = document.getElementById('setABtn');
+const setBBtn = document.getElementById('setBBtn');
+const resetABBtn = document.getElementById('resetABBtn');
+const speedSlider = document.getElementById('speedSlider');
+const speedVal = document.getElementById('speedVal');
+const timeDisplay = document.getElementById('timeDisplay');
+const abDisplay = document.getElementById('abDisplay');
+const statusBadge = document.getElementById('statusBadge');
+const canvas = document.getElementById('waveform');
+const ctx = canvas.getContext('2d');
+
+let peaks = [];
+
+fileInput.addEventListener('click', () => {
+  fileInput.value = '';
+});
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  if (isPlaying) stopAudio();
+  fileBtn.textContent = "⏳ 正在讀取並解碼音訊...";
+  statusBadge.textContent = `正在處理：${file.name}`;
+
+  if (!audioCtx) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AudioContextClass();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const arrayBuffer = evt.target.result;
+    audioCtx.decodeAudioData(
+      arrayBuffer,
+      function(decoded) {
+        rawBuffer = decoded;
+        loopStart = 0;
+        loopEnd = rawBuffer.duration;
+        pauseAudioTime = 0;
+
+        computePeaks();
+        rebuildSeamlessLoopBuffer();
+        enableControls();
+        updateUI();
+        fileBtn.textContent = "🎵 點擊更換音檔 (" + file.name + ")";
+        statusBadge.textContent = "✅ 載入成功！可點擊播放並設定 A / B 點";
+      },
+      function(err) {
+        alert("解碼失敗：請確認選擇的是音訊或影片檔（如 MP3、M4A、WAV）。");
+        fileBtn.textContent = "📁 點擊選擇 / 更換音訊檔";
+        statusBadge.textContent = "❌ 音訊解碼失敗";
+      }
+    );
+  };
+  reader.onerror = function() {
+    alert("檔案讀取失敗，請確認檔案已下載至手機本地。");
+    fileBtn.textContent = "📁 點擊選擇 / 更換音訊檔";
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+function enableControls() {
+  document.querySelectorAll('button, input[type="range"]').forEach(el => el.disabled = false);
+}
+
+function rebuildSeamlessLoopBuffer() {
+  if (!rawBuffer) return;
+
+  const sr = rawBuffer.sampleRate;
+  const numCh = rawBuffer.numberOfChannels;
+  const startSample = Math.max(0, Math.floor(loopStart * sr));
+  const endSample = Math.min(rawBuffer.length, Math.floor(loopEnd * sr));
+  const segLen = endSample - startSample;
+
+  if (segLen < sr * 0.05) return;
+
+  const fadeSamples = Math.min(Math.floor(sr * 0.004), Math.floor(segLen / 4));
+
+  if (Math.abs(tempo - 1.0) < 0.01) {
+    loopBuffer = audioCtx.createBuffer(numCh, segLen, sr);
+    for (let ch = 0; ch < numCh; ch++) {
+      const src = rawBuffer.getChannelData(ch);
+      const dst = loopBuffer.getChannelData(ch);
+      for (let i = 0; i < segLen; i++) {
+        dst[i] = src[startSample + i];
+      }
+      for (let i = 0; i < fadeSamples; i++) {
+        const t = i / fadeSamples;
+        const tailIdx = segLen - fadeSamples + i;
+        dst[tailIdx] = dst[tailIdx] * Math.cos(t * Math.PI * 0.5) + src[startSample] * Math.sin(t * Math.PI * 0.5);
+      }
+    }
+    return;
+  }
+
+  const winSize = Math.floor(sr * 0.040);
+  const halfWin = Math.floor(winSize / 2);
+  const searchRange = Math.floor(sr * 0.012);
+  const outLen = Math.max(winSize, Math.floor(segLen / tempo));
+
+  loopBuffer = audioCtx.createBuffer(numCh, outLen, sr);
+
+  const hann = new Float32Array(winSize);
+  for (let i = 0; i < winSize; i++) {
+    hann[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (winSize - 1)));
+  }
+
+  const chSrc = [];
+  const chDst = [];
+  for (let ch = 0; ch < numCh; ch++) {
+    chSrc.push(rawBuffer.getChannelData(ch));
+    chDst.push(loopBuffer.getChannelData(ch));
+  }
+
+  let outPos = 0;
+  let inPos = startSample;
+
+  while (outPos + winSize < outLen) {
+    const idealInPos = startSample + Math.floor(outPos * tempo);
+
+    let bestOffset = 0;
+    if (outPos > 0 && idealInPos + winSize + searchRange < rawBuffer.length) {
+      let maxCorr = -Infinity;
+      const refCh = chSrc[0];
+      const prevOverlapStart = inPos + halfWin;
+
+      for (let off = -searchRange; off <= searchRange; off += 4) {
+        const candStart = idealInPos + off;
+        if (candStart < startSample || candStart + halfWin >= rawBuffer.length) continue;
+        let corr = 0;
+        for (let k = 0; k < halfWin; k += 8) {
+          corr += refCh[prevOverlapStart + k] * refCh[candStart + k];
+        }
+        if (corr > maxCorr) {
+          maxCorr = corr;
+          bestOffset = off;
+        }
+      }
+    }
+
+    inPos = Math.min(rawBuffer.length - winSize - 1, Math.max(startSample, idealInPos + bestOffset));
+
+    for (let ch = 0; ch < numCh; ch++) {
+      const src = chSrc[ch];
+      const dst = chDst[ch];
+      for (let i = 0; i < winSize; i++) {
+        dst[outPos + i] += src[inPos + i] * hann[i];
+      }
+    }
+
+    outPos += halfWin;
+  }
+
+  for (let ch = 0; ch < numCh; ch++) {
+    const dst = chDst[ch];
+    const headVal = dst[0];
+    for (let i = 0; i < fadeSamples; i++) {
+      const t = i / fadeSamples;
+      const idx = outLen - fadeSamples + i;
+      if (idx >= 0 && idx < outLen) {
+        dst[idx] = dst[idx] * (1 - t) + headVal * t;
+      }
+    }
+  }
+}
+
+function getCurrentAudioTime() {
+  if (!rawBuffer) return 0;
+  if (!isPlaying) return pauseAudioTime;
+
+  const elapsedReal = audioCtx.currentTime - startCtxTime;
+  const elapsedInLoopBuf = startOffset + elapsedReal;
+  const loopBufDur = loopBuffer ? loopBuffer.duration : (loopEnd - loopStart) / tempo;
+
+  let curInLoopBuf = elapsedInLoopBuf;
+  if (isLooping && loopBufDur > 0) {
+    curInLoopBuf = elapsedInLoopBuf % loopBufDur;
+  } else if (curInLoopBuf >= loopBufDur) {
+    stopAudio();
+    pauseAudioTime = loopStart;
+    return loopStart;
+  }
+
+  const mappedTime = loopStart + curInLoopBuf * tempo;
+  return Math.min(loopEnd, Math.max(loopStart, mappedTime));
+}
+
+function startAudio(targetOriginalTime) {
+  if (!rawBuffer || !loopBuffer) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (sourceNode) {
+    try { sourceNode.stop(); sourceNode.disconnect(); } catch (e) {}
+  }
+
+  sourceNode = audioCtx.createBufferSource();
+  sourceNode.buffer = loopBuffer;
+  sourceNode.loop = isLooping;
+  sourceNode.loopStart = 0;
+  sourceNode.loopEnd = loopBuffer.duration;
+  sourceNode.connect(audioCtx.destination);
+
+  let clampedTime = targetOriginalTime;
+  if (clampedTime < loopStart || clampedTime >= loopEnd) {
+    clampedTime = loopStart;
+  }
+  const bufOffset = Math.max(0, Math.min(loopBuffer.duration - 0.01, (clampedTime - loopStart) / tempo));
+
+  startCtxTime = audioCtx.currentTime;
+  startOffset = bufOffset;
+  sourceNode.start(0, bufOffset);
+
+  isPlaying = true;
+  playBtn.textContent = "⏸ 暫停";
+
+  cancelAnimationFrame(animId);
+  tick();
+}
+
+function stopAudio() {
+  if (!isPlaying) return;
+  pauseAudioTime = getCurrentAudioTime();
+  if (sourceNode) {
+    try { sourceNode.stop(); sourceNode.disconnect(); } catch (e) {}
+    sourceNode = null;
+  }
+  isPlaying = false;
+  playBtn.textContent = "▶ 播放";
+  cancelAnimationFrame(animId);
+  updateUI();
+}
+
+function triggerRebuildAndPlay(targetPos) {
+  statusBadge.textContent = "⚡ 正在合成無縫音訊區間...";
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(() => {
+    rebuildSeamlessLoopBuffer();
+    if (isPlaying) {
+      startAudio(targetPos);
+    } else {
+      pauseAudioTime = targetPos;
+      updateUI();
+    }
+    const lenSec = (loopEnd - loopStart).toFixed(1);
+    statusBadge.textContent = `✅ 無縫循環區間：${lenSec} 秒 (${tempo.toFixed(2)}x 原調)`;
+  }, 15);
+}
+
+playBtn.addEventListener('click', () => {
+  if (isPlaying) stopAudio();
+  else startAudio(pauseAudioTime);
+});
+
+loopToggleBtn.addEventListener('click', () => {
+  isLooping = !isLooping;
+  loopToggleBtn.textContent = isLooping ? "🔁 A-B 循環: 開啟" : "➡️ A-B 循環: 關閉";
+  loopToggleBtn.classList.toggle('active-loop', isLooping);
+  if (isPlaying && sourceNode) {
+    sourceNode.loop = isLooping;
+  }
+  updateUI();
+});
+
+setABtn.addEventListener('click', () => {
+  const cur = getCurrentAudioTime();
+  if (cur < loopEnd - 0.1) {
+    loopStart = cur;
+    triggerRebuildAndPlay(cur);
+  }
+});
+
+setBBtn.addEventListener('click', () => {
+  const cur = getCurrentAudioTime();
+  if (cur > loopStart + 0.1) {
+    loopEnd = cur;
+    triggerRebuildAndPlay(loopStart);
+  }
+});
+
+resetABBtn.addEventListener('click', () => {
+  if (!rawBuffer) return;
+  const cur = getCurrentAudioTime();
+  loopStart = 0;
+  loopEnd = rawBuffer.duration;
+  triggerRebuildAndPlay(cur);
+});
+
+window.nudge = function(point, delta) {
+  if (!rawBuffer) return;
+  const cur = getCurrentAudioTime();
+  if (point === 'A') {
+    loopStart = Math.max(0, Math.min(loopEnd - 0.1, loopStart + delta));
+  } else {
+    loopEnd = Math.min(rawBuffer.duration, Math.max(loopStart + 0.1, loopEnd + delta));
+  }
+  triggerRebuildAndPlay(cur);
+};
+
+window.setSpeed = function(val) {
+  speedSlider.value = val;
+  applySpeedChange(val);
+};
+
+speedSlider.addEventListener('input', (e) => {
+  const val = parseFloat(e.target.value);
+  speedVal.textContent = val.toFixed(2) + 'x';
+});
+
+speedSlider.addEventListener('change', (e) => {
+  applySpeedChange(parseFloat(e.target.value));
+});
+
+function applySpeedChange(newTempo) {
+  const cur = getCurrentAudioTime();
+  tempo = newTempo;
+  speedVal.textContent = tempo.toFixed(2) + 'x';
+  triggerRebuildAndPlay(cur);
+}
+
+let isDragging = false;
+function seekFromEvent(e) {
+  if (!rawBuffer) return;
+  const rect = canvas.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  let seekTime = ratio * rawBuffer.duration;
+
+  if (seekTime < loopStart || seekTime > loopEnd) {
+    seekTime = Math.max(loopStart, Math.min(loopEnd - 0.05, seekTime));
+  }
+
+  if (isPlaying) {
+    startAudio(seekTime);
+  } else {
+    pauseAudioTime = seekTime;
+    updateUI();
+  }
+}
+
+canvas.addEventListener('pointerdown', (e) => { isDragging = true; seekFromEvent(e); });
+window.addEventListener('pointermove', (e) => { if (isDragging) seekFromEvent(e); });
+window.addEventListener('pointerup', () => { isDragging = false; });
+
+function computePeaks() {
+  const raw = rawBuffer.getChannelData(0);
+  const bins = 300;
+  const blockSize = Math.floor(raw.length / bins);
+  peaks = [];
+  for (let i = 0; i < bins; i++) {
+    let max = 0;
+    const start = i * blockSize;
+    for (let j = 0; j < blockSize; j += 10) {
+      const v = Math.abs(raw[start + j]);
+      if (v > max) max = v;
+    }
+    peaks.push(max);
+  }
+}
+
+function drawWaveform(curTime) {
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth * dpr;
+  const height = canvas.clientHeight * dpr;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  ctx.clearRect(0, 0, width, height);
+  if (!rawBuffer) return;
+
+  const dur = rawBuffer.duration;
+  const aX = (loopStart / dur) * width;
+  const bX = (loopEnd / dur) * width;
+  const curX = (curTime / dur) * width;
+
+  if (isLooping) {
+    ctx.fillStyle = 'rgba(0, 230, 118, 0.16)';
+    ctx.fillRect(aX, 0, bX - aX, height);
+  }
+
+  const barW = width / peaks.length;
+  for (let i = 0; i < peaks.length; i++) {
+    const x = i * barW;
+    const h = Math.max(2, peaks[i] * height * 0.85);
+    ctx.fillStyle = (isLooping && x >= aX && x <= bX) ? '#00e676' : '#444';
+    ctx.fillRect(x, (height - h) / 2, Math.max(1, barW - 1), h);
+  }
+
+  ctx.fillStyle = '#ff9100';
+  ctx.fillRect(aX, 0, 2.5 * dpr, height);
+  ctx.fillRect(bX - 2.5 * dpr, 0, 2.5 * dpr, height);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(curX - 1.2 * dpr, 0, 2.4 * dpr, height);
+}
+
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.floor((sec % 1) * 100);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+}
+
+function updateUI() {
+  const cur = getCurrentAudioTime();
+  timeDisplay.textContent = formatTime(cur);
+  abDisplay.innerHTML = `A: ${formatTime(loopStart)} &nbsp;|&nbsp; B: ${formatTime(loopEnd)}`;
+  drawWaveform(cur);
+}
+
+function tick() {
+  if (!isPlaying) return;
+  updateUI();
+  animId = requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>
